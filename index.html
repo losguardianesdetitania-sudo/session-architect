@@ -130,41 +130,56 @@ async function analyzeLibrary(automatic=false){
  }finally{if(btn)btn.disabled=false}
 }
 $('analyzePending').onclick=()=>analyzeLibrary(false);
-let essentiaInstance=null,essentiaPromise=null;
-async function getEssentia(){if(essentiaInstance)return essentiaInstance;if(!essentiaPromise)essentiaPromise=EssentiaWASM().then(w=>essentiaInstance=new Essentia(w));return essentiaPromise}
 const camelotMap={'C major':'8B','G major':'9B','D major':'10B','A major':'11B','E major':'12B','B major':'1B','F# major':'2B','Gb major':'2B','C# major':'3B','Db major':'3B','G# major':'4B','Ab major':'4B','D# major':'5B','Eb major':'5B','A# major':'6B','Bb major':'6B','F major':'7B','A minor':'8A','E minor':'9A','B minor':'10A','F# minor':'11A','Gb minor':'11A','C# minor':'12A','Db minor':'12A','G# minor':'1A','Ab minor':'1A','D# minor':'2A','Eb minor':'2A','A# minor':'3A','Bb minor':'3A','F minor':'4A','C minor':'5A','G minor':'6A','D minor':'7A'};
+function runWorkerAnalysis(samples,sampleRate){
+ return new Promise((resolve,reject)=>{
+  let worker;
+  try{worker=new Worker('./analysis-worker.js')}catch(error){reject(error);return}
+  const timer=setTimeout(()=>{worker.terminate();reject(new Error('El análisis está tardando demasiado.'))},180000);
+  worker.onmessage=e=>{clearTimeout(timer);worker.terminate();e.data&&e.data.ok?resolve(e.data):reject(new Error(e.data&&e.data.error||'Error del analizador'))};
+  worker.onerror=e=>{clearTimeout(timer);worker.terminate();reject(new Error(e.message||'No se pudo iniciar el analizador en segundo plano'))};
+  worker.postMessage({samples:samples.buffer,sampleRate},[samples.buffer]);
+ });
+}
 async function analyzeTrack(t,quiet=false){
  if(!t.blob){if(!quiet)$('analysisStatus').textContent='Esta pista no contiene audio local para analizar.';return}
  const button=document.querySelector('[data-analyze="'+t.id+'"]');if(button){button.disabled=true;button.textContent='Analizando…'}
- let ctx=null,signal=null,tempo=null;
+ let ctx=null,mono=null;
  try{
-  await new Promise(r=>setTimeout(r,25));
-  const es=await getEssentia();ctx=new (window.AudioContext||window.webkitAudioContext)();
-  const decoded=await ctx.decodeAudioData(await t.blob.arrayBuffer()),channels=Math.min(decoded.numberOfChannels,2),mono=new Float32Array(decoded.length);
-  for(let ch=0;ch<channels;ch++){const data=decoded.getChannelData(ch);for(let i=0;i<decoded.length;i++)mono[i]+=data[i]/channels}
-  let sum=0,peak=0,count=0;
+  await new Promise(r=>setTimeout(r,30));
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const decoded=await ctx.decodeAudioData(await t.blob.arrayBuffer());
+  const channels=Math.min(decoded.numberOfChannels,2);
+  mono=new Float32Array(decoded.length);
+  for(let ch=0;ch<channels;ch++){
+   const data=decoded.getChannelData(ch);
+   for(let offset=0;offset<decoded.length;offset+=262144){
+    const limit=Math.min(decoded.length,offset+262144);
+    for(let i=offset;i<limit;i++)mono[i]+=data[i]/channels;
+    if(ch===channels-1)await new Promise(resolve=>setTimeout(resolve,0));
+   }
+  }
+  let sum=0,count=0;
   const stride=Math.max(1,Math.floor(mono.length/500000));
-  for(let i=0;i<mono.length;i+=stride){const v=Math.abs(mono[i]);sum+=v*v;if(v>peak)peak=v;count++}
+  for(let i=0;i<mono.length;i+=stride){const v=mono[i];sum+=v*v;count++}
   const rms=Math.sqrt(sum/Math.max(1,count)),rmsDb=20*Math.log10(Math.max(rms,0.00001));
-  signal=es.arrayToVector(mono);
-  tempo=es.RhythmExtractor2013(signal,208,'multifeature',40);
-  const tonal=es.KeyExtractor(signal,true,4096,4096,12,3500,60,25,0.2,'bgate',decoded.sampleRate);
-  const bpm=Number(tempo.bpm),note=String(tonal.key||'').replace('♯','#').replace('♭','b'),scale=String(tonal.scale||'').toLowerCase(),camelot=camelotMap[note+' '+scale]||'';
+  const result=await runWorkerAnalysis(mono,decoded.sampleRate);
+  mono=null;
+  const bpm=Number(result.bpm),note=String(result.key||'').replace('♯','#').replace('♭','b'),scale=String(result.scale||'').toLowerCase(),camelot=camelotMap[note+' '+scale]||'';
   if(Number.isFinite(bpm)&&bpm>=40&&bpm<=208)t.bpm=Math.round(bpm*10)/10;
   if(camelot)t.key=camelot;
   const loudnessScore=Math.max(0,Math.min(1,(rmsDb+32)/24));
   const tempoScore=Math.max(0,Math.min(1,((Number.isFinite(bpm)?bpm:100)-70)/80));
   t.energy=Math.max(1,Math.min(10,Math.round(1+9*(0.7*loudnessScore+0.3*tempoScore))));
   applyEnergyCategory(t);
-  t.analysisDone=true;t.analysisBpmConfidence=Number(tempo.confidence)||0;t.analysisKeyStrength=Number(tonal.strength)||0;
+  t.analysisDone=true;t.analysisBpmConfidence=Number(result.bpmConfidence)||0;t.analysisKeyStrength=Number(result.keyStrength)||0;
   t.analysisRmsDb=Math.round(rmsDb*10)/10;
   t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado')+' · Energía estimada '+t.energy+'/10';
   await save(t);
   if(!quiet)$('analysisStatus').textContent='Análisis terminado: '+t.name;
  }catch(err){console.error(err);t.analysisDone=false;if(!quiet)$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
  finally{
-  try{if(tempo&&tempo.ticks&&tempo.ticks.delete)tempo.ticks.delete()}catch(e){}
-  try{if(signal&&signal.delete)signal.delete()}catch(e){}
+  mono=null;
   if(ctx)try{await ctx.close()}catch(e){}
   await refresh();
  }
