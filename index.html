@@ -44,5 +44,5 @@ async function analyzeTrack(t){
  }catch(err){console.error(err);$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
  finally{refresh()}
 }
-\n$('wheelkey').innerHTML=keys.map(k=>'<option>'+k+'</option>').join('');function draw(){let k=$('wheelkey').value;$('wheel').innerHTML=keys.map(x=>'<div class="key '+(compat(k,x)?'active':'')+'">'+x+'</div>').join('')}$('wheelkey').onchange=draw;draw();init().catch(console.error);
+$('wheelkey').innerHTML=keys.map(k=>'<option>'+k+'</option>').join('');function draw(){let k=$('wheelkey').value;$('wheel').innerHTML=keys.map(x=>'<div class="key '+(compat(k,x)?'active':'')+'">'+x+'</div>').join('')}$('wheelkey').onchange=draw;draw();init().catch(console.error);
 </script></body></html>
