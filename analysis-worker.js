@@ -1,6 +1,6 @@
 importScripts(
   'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia-wasm.web.js',
-  'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia.js-core.js'
+  'https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia.js-core.min.js'
 );
 let enginePromise;
 async function getEngine(){
