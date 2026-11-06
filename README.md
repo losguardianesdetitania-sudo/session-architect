@@ -15,3 +15,7 @@ En Settings > Pages, selecciona Deploy from a branch, branch main y carpeta /(ro
 
 ## Instalar
 Android Chrome: abre la URL HTTPS, menú ⋮ y elige Instalar aplicación/Añadir a pantalla de inicio. En escritorio, usa el icono de instalación del navegador.
+
+
+## Análisis automático de audio
+La interfaz integra Essentia.js 0.1.3 (WebAssembly) para estimar BPM y tonalidad a partir de los archivos de audio guardados localmente. La decodificación y el análisis se ejecutan en el navegador; no se envía el audio a un servicio de análisis remoto. La primera carga del motor requiere conexión para descargar los recursos desde jsDelivr. Los resultados son estimaciones y pueden requerir corrección manual, especialmente en temas con tempo variable, intros largas o armonía ambigua. El motor Essentia.js está publicado bajo licencia AGPL-3.0; consulta el proyecto original y sus condiciones en https://github.com/MTG/essentia.js.
