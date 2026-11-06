@@ -26,31 +26,33 @@ $('rows').addEventListener('change',async e=>{let el=e.target,t=tracks.find(t=>t
 $('rows').addEventListener('click',async e=>{if(e.target.dataset.del){await req(db.transaction(S,'readwrite').objectStore(S).delete(e.target.dataset.del));refresh()}if(e.target.dataset.analyze){let t=tracks.find(x=>x.id===e.target.dataset.analyze);if(t)await analyzeTrack(t)}});
 async function importAudioFiles(fileList){
  const files=Array.from(fileList||[]),audioExt=/\.(mp3|wav|flac|m4a|aac|ogg|aiff?|wma|opus)$/i;
- let added=0,skipped=0;
+ let added=0,skipped=0;const imported=[];
  for(const f of files){
   if(!(f.type&&f.type.startsWith('audio/'))&&!audioExt.test(f.name)){skipped++;continue}
   const rel=f.webkitRelativePath||f.name;
-  await save({id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),bpm:null,key:'',energy:null,categories:[],blob:f,folderPath:rel.includes('/')?rel.slice(0,rel.lastIndexOf('/')):'',sourcePath:rel,analysisDone:false});
-  added++;
- }
- refresh();
- $('analysisStatus').textContent=added+' pista(s) añadida(s)'+(skipped?' · '+skipped+' archivo(s) no reconocidos omitidos':'')+'. Asigna energía y usa «Clasificar por energía».';
-}
-$('audio').onchange=async e=>{await importAudioFiles(e.target.files);e.target.value=''};
-$('folder').onchange=async e=>{await importAudioFiles(e.target.files);e.target.value=''};
-$('classifyEnergy').onclick=async()=>{
- let n=0;
- for(const t of tracks){
-  const e=Number(t.energy);
-  if(!Number.isFinite(e)||e<1||e>10)continue;
-  const cats=[];
-  if(e<=4)cats.push('INTRO');
-  if(e>=4&&e<=7)cats.push('DESARROLLO');
-  if(e>=7)cats.push('CLOSING');
-  t.categories=cats;await save(t);n++;
+  const t={id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),bpm:null,key:'',energy:null,categories:[],blob:f,folderPath:rel.includes('/')?rel.slice(0,rel.lastIndexOf('/')):'',sourcePath:rel,analysisDone:false};
+  await save(t);imported.push(t);added++;
  }
  await refresh();
- $('analysisStatus').textContent=n+' pista(s) clasificadas según energía. 4 comparte INTRO/DESARROLLO y 7 comparte DESARROLLO/CLOSING.';
+ if(!added){$('analysisStatus').textContent='No se encontraron archivos de audio compatibles.'+(skipped?' '+skipped+' archivo(s) omitidos.':'');return}
+ $('analysisStatus').textContent='Importadas '+added+' pistas. Iniciando análisis automático de BPM, tonalidad y energía…';
+ for(let i=0;i<imported.length;i++){
+  $('analysisStatus').textContent='Analizando '+(i+1)+' de '+added+': '+imported[i].name;
+  await analyzeTrack(imported[i],true);
+  await new Promise(resolve=>setTimeout(resolve,30));
+ }
+ $('analysisStatus').textContent='Proceso terminado: '+added+' pista(s) procesadas.'+(skipped?' '+skipped+' archivo(s) omitidos.':'')+' Revisa las pistas con detección no concluyente.';
+};
+$('audio').onchange=async e=>{await importAudioFiles(e.target.files);e.target.value=''};
+$('folder').onchange=async e=>{await importAudioFiles(e.target.files);e.target.value=''};
+function applyEnergyCategory(t){
+ const e=Number(t.energy);if(!Number.isFinite(e)||e<1||e>10)return;
+ const cats=[];if(e<=4)cats.push('INTRO');if(e>=4&&e<=7)cats.push('DESARROLLO');if(e>=7)cats.push('CLOSING');
+ t.categories=cats;
+}
+$('classifyEnergy').onclick=async()=>{
+ let n=0;for(const t of tracks){applyEnergyCategory(t);if(Number.isFinite(Number(t.energy))&&Number(t.energy)>=1&&Number(t.energy)<=10){await save(t);n++}}
+ await refresh();$('analysisStatus').textContent=n+' pista(s) clasificadas según energía estimada.';
 };
 ['search','category'].forEach(x=>$(x).oninput=render);document.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{active=b.dataset.cat;document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('active',x===b));render()});
 function parseCSV(s){return s.trim().split(/\r?\n/).map(line=>line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')))}$('csvIn').onclick=()=>$('csvFile').click();$('csvFile').onchange=async e=>{let a=parseCSV(await e.target.files[0].text()),h=a.shift().map(x=>x.toLowerCase());for(let row of a){let o=Object.fromEntries(h.map((x,i)=>[x,row[i]||'']));let k=(o.key||o.camelot||'').toUpperCase();await save({id:crypto.randomUUID(),name:o.name||o.title||'Pista',bpm:Number(o.bpm)||null,key:keys.includes(k)?k:'',energy:Number(o.energy)||null,categories:(o.categories||o.category||'').toUpperCase().split(/[;|]/).filter(x=>['INTRO','DESARROLLO','CLOSING'].includes(x)),blob:null})}e.target.value='';refresh()};
@@ -100,25 +102,41 @@ $('analyzePending').onclick=async()=>{let pending=tracks.filter(t=>t.blob&&!t.an
 let essentiaInstance=null,essentiaPromise=null;
 async function getEssentia(){if(essentiaInstance)return essentiaInstance;if(!essentiaPromise)essentiaPromise=EssentiaWASM().then(w=>essentiaInstance=new Essentia(w));return essentiaPromise}
 const camelotMap={'C major':'8B','G major':'9B','D major':'10B','A major':'11B','E major':'12B','B major':'1B','F# major':'2B','Gb major':'2B','C# major':'3B','Db major':'3B','G# major':'4B','Ab major':'4B','D# major':'5B','Eb major':'5B','A# major':'6B','Bb major':'6B','F major':'7B','A minor':'8A','E minor':'9A','B minor':'10A','F# minor':'11A','Gb minor':'11A','C# minor':'12A','Db minor':'12A','G# minor':'1A','Ab minor':'1A','D# minor':'2A','Eb minor':'2A','A# minor':'3A','Bb minor':'3A','F minor':'4A','C minor':'5A','G minor':'6A','D minor':'7A'};
-async function analyzeTrack(t){
- if(!t.blob){$('analysisStatus').textContent='Esta pista no contiene audio local para analizar.';return}
+async function analyzeTrack(t,quiet=false){
+ if(!t.blob){if(!quiet)$('analysisStatus').textContent='Esta pista no contiene audio local para analizar.';return}
  const button=document.querySelector('[data-analyze="'+t.id+'"]');if(button){button.disabled=true;button.textContent='Analizando…'}
- $('analysisStatus').textContent='Preparando análisis de '+t.name+'…';
+ let ctx=null,signal=null,tempo=null;
  try{
-  await new Promise(r=>setTimeout(r,50));
-  const es=await getEssentia(),ctx=new (window.AudioContext||window.webkitAudioContext)();
+  await new Promise(r=>setTimeout(r,25));
+  const es=await getEssentia();ctx=new (window.AudioContext||window.webkitAudioContext)();
   const decoded=await ctx.decodeAudioData(await t.blob.arrayBuffer()),channels=Math.min(decoded.numberOfChannels,2),mono=new Float32Array(decoded.length);
   for(let ch=0;ch<channels;ch++){const data=decoded.getChannelData(ch);for(let i=0;i<decoded.length;i++)mono[i]+=data[i]/channels}
-  const signal=es.arrayToVector(mono),tempo=es.RhythmExtractor2013(signal,208,'multifeature',40),tonal=es.KeyExtractor(signal,true,4096,4096,12,3500,60,25,0.2,'bgate',decoded.sampleRate);
+  let sum=0,peak=0,count=0;
+  const stride=Math.max(1,Math.floor(mono.length/500000));
+  for(let i=0;i<mono.length;i+=stride){const v=Math.abs(mono[i]);sum+=v*v;if(v>peak)peak=v;count++}
+  const rms=Math.sqrt(sum/Math.max(1,count)),rmsDb=20*Math.log10(Math.max(rms,0.00001));
+  signal=es.arrayToVector(mono);
+  tempo=es.RhythmExtractor2013(signal,208,'multifeature',40);
+  const tonal=es.KeyExtractor(signal,true,4096,4096,12,3500,60,25,0.2,'bgate',decoded.sampleRate);
   const bpm=Number(tempo.bpm),note=String(tonal.key||'').replace('♯','#').replace('♭','b'),scale=String(tonal.scale||'').toLowerCase(),camelot=camelotMap[note+' '+scale]||'';
   if(Number.isFinite(bpm)&&bpm>=40&&bpm<=208)t.bpm=Math.round(bpm*10)/10;
   if(camelot)t.key=camelot;
+  const loudnessScore=Math.max(0,Math.min(1,(rmsDb+32)/24));
+  const tempoScore=Math.max(0,Math.min(1,((Number.isFinite(bpm)?bpm:100)-70)/80));
+  t.energy=Math.max(1,Math.min(10,Math.round(1+9*(0.7*loudnessScore+0.3*tempoScore))));
+  applyEnergyCategory(t);
   t.analysisDone=true;t.analysisBpmConfidence=Number(tempo.confidence)||0;t.analysisKeyStrength=Number(tonal.strength)||0;
-  t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado');
-  await save(t);if(tempo.ticks&&tempo.ticks.delete)tempo.ticks.delete();if(signal&&signal.delete)signal.delete();await ctx.close();
-  $('analysisStatus').textContent='Análisis terminado: '+t.name+'. Revisa los valores y corrígelos si hace falta.';
- }catch(err){console.error(err);$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
- finally{refresh()}
+  t.analysisRmsDb=Math.round(rmsDb*10)/10;
+  t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado')+' · Energía estimada '+t.energy+'/10';
+  await save(t);
+  if(!quiet)$('analysisStatus').textContent='Análisis terminado: '+t.name;
+ }catch(err){console.error(err);t.analysisDone=false;if(!quiet)$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
+ finally{
+  try{if(tempo&&tempo.ticks&&tempo.ticks.delete)tempo.ticks.delete()}catch(e){}
+  try{if(signal&&signal.delete)signal.delete()}catch(e){}
+  if(ctx)try{await ctx.close()}catch(e){}
+  await refresh();
+ }
 }
 $('wheelkey').innerHTML=keys.map(k=>'<option>'+k+'</option>').join('');function draw(){let k=$('wheelkey').value;$('wheel').innerHTML=keys.map(x=>'<div class="key '+(compat(k,x)?'active':'')+'">'+x+'</div>').join('')}$('wheelkey').onchange=draw;draw();init().catch(console.error);
 </script></body></html>
