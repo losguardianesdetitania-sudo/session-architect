@@ -48,7 +48,19 @@ $('folder').onchange=async e=>{await importAudioFiles(e.target.files);e.target.v
 $('replaceFolder').onchange=async e=>{
  const files=Array.from(e.target.files||[]);
  if(!files.length){e.target.value='';return}
- const audioExt=new RegExp('\\.(mp3|wav|flac|m4a|aac|ogg|aiff?|wma|opus)
+ const audioExt=/\\.(mp3|wav|flac|m4a|aac|ogg|aiff?|wma|opus)$/i;
+ const audioCount=files.filter(f=>(f.type&&f.type.startsWith('audio/'))||audioExt.test(f.name)).length;
+ if(!audioCount){$('analysisStatus').textContent='La carpeta seleccionada no contiene archivos de audio compatibles.';e.target.value='';return}
+ const answer=confirm('Vas a sustituir la biblioteca actual ('+tracks.length+' pistas) por '+audioCount+' pistas de la nueva carpeta.\\n\\nSe borrarán los datos guardados de la biblioteca anterior en esta aplicación, pero NO los archivos originales de tu dispositivo. ¿Continuar?');
+ if(!answer){$('analysisStatus').textContent='Sustitución cancelada. Tu biblioteca anterior sigue intacta.';e.target.value='';return}
+ try{
+  $('analysisStatus').textContent='Preparando la nueva biblioteca…';
+  await new Promise((resolve,reject)=>{const tx=db.transaction(S,'readwrite');tx.objectStore(S).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)});
+  await refresh();
+  await importAudioFiles(files);
+ }catch(err){console.error(err);$('analysisStatus').textContent='No se pudo sustituir la biblioteca: '+(err.message||err)}
+ finally{e.target.value=''}
+};
 function applyEnergyCategory(t){
  const e=Number(t.energy);if(!Number.isFinite(e)||e<1||e>10)return;
  const cats=[];if(e<=4)cats.push('INTRO');if(e>=4&&e<=7)cats.push('DESARROLLO');if(e>=7)cats.push('CLOSING');
@@ -118,127 +130,6 @@ async function analyzeLibrary(automatic=false){
  }finally{if(btn)btn.disabled=false}
 }
 $('analyzePending').onclick=()=>analyzeLibrary(false);
-let essentiaInstance=null,essentiaPromise=null;
-async function getEssentia(){if(essentiaInstance)return essentiaInstance;if(!essentiaPromise)essentiaPromise=EssentiaWASM().then(w=>essentiaInstance=new Essentia(w));return essentiaPromise}
-const camelotMap={'C major':'8B','G major':'9B','D major':'10B','A major':'11B','E major':'12B','B major':'1B','F# major':'2B','Gb major':'2B','C# major':'3B','Db major':'3B','G# major':'4B','Ab major':'4B','D# major':'5B','Eb major':'5B','A# major':'6B','Bb major':'6B','F major':'7B','A minor':'8A','E minor':'9A','B minor':'10A','F# minor':'11A','Gb minor':'11A','C# minor':'12A','Db minor':'12A','G# minor':'1A','Ab minor':'1A','D# minor':'2A','Eb minor':'2A','A# minor':'3A','Bb minor':'3A','F minor':'4A','C minor':'5A','G minor':'6A','D minor':'7A'};
-async function analyzeTrack(t,quiet=false){
- if(!t.blob){if(!quiet)$('analysisStatus').textContent='Esta pista no contiene audio local para analizar.';return}
- const button=document.querySelector('[data-analyze="'+t.id+'"]');if(button){button.disabled=true;button.textContent='Analizando…'}
- let ctx=null,signal=null,tempo=null;
- try{
-  await new Promise(r=>setTimeout(r,25));
-  const es=await getEssentia();ctx=new (window.AudioContext||window.webkitAudioContext)();
-  const decoded=await ctx.decodeAudioData(await t.blob.arrayBuffer()),channels=Math.min(decoded.numberOfChannels,2),mono=new Float32Array(decoded.length);
-  for(let ch=0;ch<channels;ch++){const data=decoded.getChannelData(ch);for(let i=0;i<decoded.length;i++)mono[i]+=data[i]/channels}
-  let sum=0,peak=0,count=0;
-  const stride=Math.max(1,Math.floor(mono.length/500000));
-  for(let i=0;i<mono.length;i+=stride){const v=Math.abs(mono[i]);sum+=v*v;if(v>peak)peak=v;count++}
-  const rms=Math.sqrt(sum/Math.max(1,count)),rmsDb=20*Math.log10(Math.max(rms,0.00001));
-  signal=es.arrayToVector(mono);
-  tempo=es.RhythmExtractor2013(signal,208,'multifeature',40);
-  const tonal=es.KeyExtractor(signal,true,4096,4096,12,3500,60,25,0.2,'bgate',decoded.sampleRate);
-  const bpm=Number(tempo.bpm),note=String(tonal.key||'').replace('♯','#').replace('♭','b'),scale=String(tonal.scale||'').toLowerCase(),camelot=camelotMap[note+' '+scale]||'';
-  if(Number.isFinite(bpm)&&bpm>=40&&bpm<=208)t.bpm=Math.round(bpm*10)/10;
-  if(camelot)t.key=camelot;
-  const loudnessScore=Math.max(0,Math.min(1,(rmsDb+32)/24));
-  const tempoScore=Math.max(0,Math.min(1,((Number.isFinite(bpm)?bpm:100)-70)/80));
-  t.energy=Math.max(1,Math.min(10,Math.round(1+9*(0.7*loudnessScore+0.3*tempoScore))));
-  applyEnergyCategory(t);
-  t.analysisDone=true;t.analysisBpmConfidence=Number(tempo.confidence)||0;t.analysisKeyStrength=Number(tonal.strength)||0;
-  t.analysisRmsDb=Math.round(rmsDb*10)/10;
-  t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado')+' · Energía estimada '+t.energy+'/10';
-  await save(t);
-  if(!quiet)$('analysisStatus').textContent='Análisis terminado: '+t.name;
- }catch(err){console.error(err);t.analysisDone=false;if(!quiet)$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
- finally{
-  try{if(tempo&&tempo.ticks&&tempo.ticks.delete)tempo.ticks.delete()}catch(e){}
-  try{if(signal&&signal.delete)signal.delete()}catch(e){}
-  if(ctx)try{await ctx.close()}catch(e){}
-  await refresh();
- }
-}
-$('wheelkey').innerHTML=keys.map(k=>'<option>'+k+'</option>').join('');function draw(){let k=$('wheelkey').value;$('wheel').innerHTML=keys.map(x=>'<div class="key '+(compat(k,x)?'active':'')+'">'+x+'</div>').join('')}$('wheelkey').onchange=draw;draw();init().catch(console.error);
-</script></body></html>,'i');
- const audioCount=files.filter(f=>(f.type&&f.type.startsWith('audio/'))||audioExt.test(f.name)).length;
- if(!audioCount){$('analysisStatus').textContent='La carpeta seleccionada no contiene archivos de audio compatibles.';e.target.value='';return}
- const answer=confirm('Vas a sustituir la biblioteca actual ('+tracks.length+' pistas) por '+audioCount+' pistas de la nueva carpeta.\n\nSe borrarán los datos guardados de la biblioteca anterior en esta aplicación, pero NO los archivos originales de tu dispositivo. ¿Continuar?');
- if(!answer){$('analysisStatus').textContent='Sustitución cancelada. Tu biblioteca anterior sigue intacta.';e.target.value='';return}
- try{
-  $('analysisStatus').textContent='Preparando la nueva biblioteca…';
-  await new Promise((resolve,reject)=>{const tx=db.transaction(S,'readwrite');tx.objectStore(S).clear();tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)});
-  await refresh();
-  await importAudioFiles(files);
- }catch(err){console.error(err);$('analysisStatus').textContent='No se pudo sustituir la biblioteca: '+(err.message||err)}
- finally{e.target.value=''}
-};
-function applyEnergyCategory(t){
- const e=Number(t.energy);if(!Number.isFinite(e)||e<1||e>10)return;
- const cats=[];if(e<=4)cats.push('INTRO');if(e>=4&&e<=7)cats.push('DESARROLLO');if(e>=7)cats.push('CLOSING');
- t.categories=cats;
-}
-$('classifyEnergy').onclick=async()=>{
- let n=0;for(const t of tracks){applyEnergyCategory(t);if(Number.isFinite(Number(t.energy))&&Number(t.energy)>=1&&Number(t.energy)<=10){await save(t);n++}}
- await refresh();$('analysisStatus').textContent=n+' pista(s) clasificadas según energía estimada.';
-};
-['search','category'].forEach(x=>$(x).oninput=render);document.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{active=b.dataset.cat;document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('active',x===b));render()});
-function parseCSV(s){return s.trim().split(/\r?\n/).map(line=>line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')))}$('csvIn').onclick=()=>$('csvFile').click();$('csvFile').onchange=async e=>{let a=parseCSV(await e.target.files[0].text()),h=a.shift().map(x=>x.toLowerCase());for(let row of a){let o=Object.fromEntries(h.map((x,i)=>[x,row[i]||'']));let k=(o.key||o.camelot||'').toUpperCase();await save({id:crypto.randomUUID(),name:o.name||o.title||'Pista',bpm:Number(o.bpm)||null,key:keys.includes(k)?k:'',energy:Number(o.energy)||null,categories:(o.categories||o.category||'').toUpperCase().split(/[;|]/).filter(x=>['INTRO','DESARROLLO','CLOSING'].includes(x)),blob:null})}e.target.value='';refresh()};
-function download(s,n,type){let u=URL.createObjectURL(new Blob([s],{type})),a=document.createElement('a');a.href=u;a.download=n;a.click();URL.revokeObjectURL(u)}$('csvOut').onclick=()=>download(['name,bpm,key,energy,categories',...tracks.map(t=>[t.name,t.bpm,t.key,t.energy,t.categories.join(';')].map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(','))].join('\r\n'),'session-architect.csv','text/csv');$('m3uOut').onclick=()=>{let c=$('category').value;download('#EXTM3U\n'+tracks.filter(t=>c==='ALL'||t.categories.includes(c)).map(t=>'#EXTINF:-1,'+t.name+'\n'+t.name).join('\n'),'session-architect.m3u','audio/x-mpegurl')};
-
-$('rekordboxOut').onclick=async()=>{
- const btn=$('rekordboxOut');
- const eligible=tracks.filter(t=>t.blob instanceof Blob);
- if(!eligible.length){$('analysisStatus').textContent='No hay archivos de audio locales para exportar. Importa primero tus canciones.';return}
- if(!window.JSZip){$('analysisStatus').textContent='No se ha podido cargar el creador ZIP. Comprueba tu conexión y vuelve a intentarlo.';return}
- btn.disabled=true;btn.textContent='Preparando exportación…';
- try{
-  const zip=new JSZip(),root='SESSION ARCHITECT EXPORT',cats=['INTRO','DESARROLLO','CLOSING'];
-  const used={INTRO:new Set(),DESARROLLO:new Set(),CLOSING:new Set()};
-  const names={};
-  const safeName=(name)=>name.replace(/[\\/:*?"<>|]/g,'_').replace(/[. ]+$/,'').trim()||'Pista';
-  const extOf=(t)=>{const n=t.sourcePath||t.blob.name||t.name;const m=n.match(/(\.[a-z0-9]{1,8})$/i);return m?m[1]:''};
-  for(const cat of cats){
-   const folder=zip.folder(root+'/'+cat),entries=[];
-   for(const t of eligible.filter(x=>x.categories.includes(cat))){
-    const ext=extOf(t),base=safeName(t.name||t.blob.name.replace(/\.[^.]+$/,''));let filename=base+ext,n=2;
-    while(used[cat].has(filename.toLowerCase()))filename=base+' ('+(n++)+')'+ext;
-    used[cat].add(filename.toLowerCase());
-    folder.file(filename,t.blob);
-    entries.push(filename);
-   }
-   const playlist='#EXTM3U\r\n'+entries.map(n=>'#EXTINF:-1,'+n+'\r\n'+n).join('\r\n')+(entries.length?'\r\n':'');
-   folder.file(cat+'.m3u8',playlist);
-  }
-  const unclassified=eligible.filter(t=>!cats.some(c=>t.categories.includes(c)));
-  if(unclassified.length){
-   const folder=zip.folder(root+'/SIN_CLASIFICAR'),entries=[],seen=new Set();
-   for(const t of unclassified){const ext=extOf(t),base=safeName(t.name||'Pista');let filename=base+ext,n=2;while(seen.has(filename.toLowerCase()))filename=base+' ('+(n++)+')'+ext;seen.add(filename.toLowerCase());folder.file(filename,t.blob);entries.push(filename)}
-   folder.file('SIN_CLASIFICAR.m3u8','#EXTM3U\r\n'+entries.map(n=>'#EXTINF:-1,'+n+'\r\n'+n).join('\r\n')+(entries.length?'\r\n':''));
-  }
-  zip.file(root+'/LEEME.txt','SESSION ARCHITECT – Exportación para Rekordbox\r\n\r\n1. Descomprime esta carpeta en una ubicación fija de tu ordenador o disco.\r\n2. En Rekordbox, usa Archivo > Importar > Importar lista de reproducción.\r\n3. Selecciona INTRO/INTRO.m3u8, DESARROLLO/DESARROLLO.m3u8 o CLOSING/CLOSING.m3u8.\r\n4. Si hay canciones en SIN_CLASIFICAR, puedes importarlas también desde esa lista.\r\n\r\nSe conservan los archivos de audio originales. Las pistas asignadas a varias categorías se copian en cada carpeta correspondiente. No se convierten formatos.\r\n');
-  $('analysisStatus').textContent='Comprimiendo '+eligible.length+' archivos de audio…';
-  const blob=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:3}});
-  download(blob,'SESSION-ARCHITECT-REKORDBOX.zip','application/zip');
-  $('analysisStatus').textContent='Exportación lista: '+eligible.length+' pista(s) incluidas. Descomprime el ZIP antes de importar las listas M3U8 en Rekordbox.';
- }catch(err){console.error(err);$('analysisStatus').textContent='Error al preparar el ZIP: '+(err.message||err)}
- finally{btn.disabled=false;btn.textContent='Exportar para Rekordbox (ZIP)'}
-};
-
-
-$('analyzePending').onclick=async()=>{
- const btn=$('analyzePending'),pending=tracks.filter(t=>t.blob&&(!t.analysisDone||!(Number(t.energy)>=1&&Number(t.energy)<=10)||!Array.isArray(t.categories)||!t.categories.length));
- if(!pending.length){$('analysisStatus').textContent='No hay pistas pendientes: las pistas con audio ya tienen energía y categorías. Puedes usar Reanalizar en una pista concreta si lo necesitas.';return}
- btn.disabled=true;let failed=0;
- try{
-  for(let i=0;i<pending.length;i++){
-   $('analysisStatus').textContent='Análisis automático: '+(i+1)+' de '+pending.length+' · '+pending[i].name+' (no cierres esta página)';
-   await analyzeTrack(pending[i],true);
-   if(!pending[i].analysisDone)failed++;
-   await new Promise(resolve=>setTimeout(resolve,40));
-  }
-  await refresh();
-  $('analysisStatus').textContent='Proceso terminado: '+(pending.length-failed)+' pista(s) analizadas y clasificadas automáticamente'+(failed?' · '+failed+' con error, puedes reintentarlas':'')+'.';
- }finally{btn.disabled=false}
-};
 let essentiaInstance=null,essentiaPromise=null;
 async function getEssentia(){if(essentiaInstance)return essentiaInstance;if(!essentiaPromise)essentiaPromise=EssentiaWASM().then(w=>essentiaInstance=new Essentia(w));return essentiaPromise}
 const camelotMap={'C major':'8B','G major':'9B','D major':'10B','A major':'11B','E major':'12B','B major':'1B','F# major':'2B','Gb major':'2B','C# major':'3B','Db major':'3B','G# major':'4B','Ab major':'4B','D# major':'5B','Eb major':'5B','A# major':'6B','Bb major':'6B','F major':'7B','A minor':'8A','E minor':'9A','B minor':'10A','F# minor':'11A','Gb minor':'11A','C# minor':'12A','Db minor':'12A','G# minor':'1A','Ab minor':'1A','D# minor':'2A','Eb minor':'2A','A# minor':'3A','Bb minor':'3A','F minor':'4A','C minor':'5A','G minor':'6A','D minor':'7A'};
