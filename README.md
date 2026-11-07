@@ -7,8 +7,8 @@ PWA para organizar una biblioteca DJ local. Permite importar varios archivos de 
 ## Datos
 Los archivos se almacenan en IndexedDB del navegador y no se envían a servidores. Exportar CSV guarda metadatos, no audio. Mantén copias de tus archivos originales.
 
-## Limitaciones
-BPM, tonalidad y energía son manuales o importados por CSV; no hay análisis automático. M3U exporta nombres de pistas, no rutas absolutas portables.
+## Análisis v18.2
+BPM y tonalidad se estiman localmente con Essentia.js. La tonalidad detectada se convierte a Camelot cuando existe una correspondencia conocida. La energía se estima con nivel RMS, transitorios, densidad dinámica y tempo. El género y el año se completan desde etiquetas incrustadas del archivo cuando están disponibles; no se deducen solo de BPM/energía ni se inventan si faltan. Los datos editados manualmente se conservan al reanalizar. Las estimaciones pueden requerir revisión; la detección de género por audio no está disponible todavía sin un modelo especializado. M3U exporta nombres de pistas, no rutas absolutas portables.
 
 ## GitHub Pages
 En Settings > Pages, selecciona Deploy from a branch, branch main y carpeta /(root), y guarda. Abre la URL HTTPS generada.
