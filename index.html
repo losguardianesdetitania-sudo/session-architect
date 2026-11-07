@@ -8,7 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script><script src="https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia-wasm.web.min.js"></script><script src="https://cdn.jsdelivr.net/npm/essentia.js@0.1.3/dist/essentia.js-core.min.js"></script>
 <script>
 const DB='session-architect',S='tracks',keys=Array.from({length:12},(_,i)=>i+1).flatMap(n=>[n+'A',n+'B']),genres=['House','Deep House','Tech House','Progressive House','Melodic House & Techno','Techno','Melodic Techno','Minimal / Deep Tech','Afro House','Trance','Progressive Trance','Psy-Trance','Drum & Bass','Breakbeat','Disco / Nu-Disco','Downtempo / Ambient','Electrónica','Hip-Hop','Pop','Rock','Otro'];let db,tracks=[],active='ALL';const $=x=>document.getElementById(x);
-function req(r){return new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)})}async function init(){db=await new Promise((ok,no)=>{let r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(S,{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});await refresh();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});setTimeout(()=>analyzeLibrary(true),700)}
+function req(r){return new Promise((ok,no)=>{r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)})}async function init(){db=await new Promise((ok,no)=>{let r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(S,{keyPath:'id'});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});await refresh();for(const t of tracks){if(!t.genreManual&&!t.genreChecked){const guess=suggestGenre(t);t.genre=guess;t.genreAuto=!!guess;t.genreChecked=true;await save(t)}}await refresh();if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});setTimeout(()=>analyzeLibrary(true),700)}
 async function save(t){await req(db.transaction(S,'readwrite').objectStore(S).put(t))}async function refresh(){tracks=await req(db.transaction(S).objectStore(S).getAll());render()}
 function compat(a,b){if(!a||!b)return false;let x=+a.slice(0,-1),y=+b.slice(0,-1);return a===b||(a.slice(-1)===b.slice(-1)&&((x-y+12)%12===1||(y-x+12)%12===1))||(x===y&&a.slice(-1)!==b.slice(-1))}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -22,7 +22,7 @@ $('clearLibrary').onclick=async()=>{
  await refresh();
  $('analysisStatus').textContent='Biblioteca vacía. Ya puedes importar tu carpeta una sola vez.';
 };
-$('rows').addEventListener('change',async e=>{let el=e.target,t=tracks.find(t=>t.id===el.dataset.id);if(!t)return;if(el.dataset.f){let f=el.dataset.f;t[f]=['bpm','energy'].includes(f)?(el.value?Number(el.value):null):el.value;if(f==='energy'&&t.energy!==null)t.energy=Math.max(1,Math.min(10,t.energy));if(f==='genre'){t.genreManual=!!el.value;t.genreAuto=false}}if(el.dataset.c)t.categories=el.checked?[...new Set([...t.categories,el.dataset.c])]:t.categories.filter(x=>x!==el.dataset.c);await save(t);refresh()});
+$('rows').addEventListener('change',async e=>{let el=e.target,t=tracks.find(t=>t.id===el.dataset.id);if(!t)return;if(el.dataset.f){let f=el.dataset.f;t[f]=['bpm','energy'].includes(f)?(el.value?Number(el.value):null):el.value;if(f==='energy'&&t.energy!==null)t.energy=Math.max(1,Math.min(10,t.energy));if(f==='genre'){t.genreManual=!!el.value;t.genreAuto=false;t.genreChecked=!!el.value}}if(el.dataset.c)t.categories=el.checked?[...new Set([...t.categories,el.dataset.c])]:t.categories.filter(x=>x!==el.dataset.c);await save(t);refresh()});
 $('rows').addEventListener('click',async e=>{if(e.target.dataset.del){await req(db.transaction(S,'readwrite').objectStore(S).delete(e.target.dataset.del));refresh()}if(e.target.dataset.analyze){let t=tracks.find(x=>x.id===e.target.dataset.analyze);if(t)await analyzeTrack(t)}});
 async function importAudioFiles(fileList){
  const files=Array.from(fileList||[]),audioExt=/\.(mp3|wav|flac|m4a|aac|ogg|aiff?|wma|opus)$/i;
@@ -30,7 +30,7 @@ async function importAudioFiles(fileList){
  for(const f of files){
   if(!(f.type&&f.type.startsWith('audio/'))&&!audioExt.test(f.name)){skipped++;continue}
   const rel=f.webkitRelativePath||f.name;
-  const t={id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),bpm:null,key:'',energy:null,categories:[],genre:'',genreAuto:false,genreManual:false,blob:f,folderPath:rel.includes('/')?rel.slice(0,rel.lastIndexOf('/')):'',sourcePath:rel,analysisDone:false};
+  const t={id:crypto.randomUUID(),name:f.name.replace(/\.[^.]+$/,''),bpm:null,key:'',energy:null,categories:[],genre:'',genreAuto:false,genreManual:false,genreChecked:false,blob:f,folderPath:rel.includes('/')?rel.slice(0,rel.lastIndexOf('/')):'',sourcePath:rel,analysisDone:false};
   await save(t);imported.push(t);added++;
  }
  await refresh();
@@ -85,7 +85,7 @@ $('classifyEnergy').onclick=async()=>{
  await refresh();$('analysisStatus').textContent=n+' pista(s) clasificadas según energía estimada.';
 };
 ['search','category'].forEach(x=>$(x).oninput=render);document.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{active=b.dataset.cat;document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('active',x===b));render()});
-function parseCSV(s){return s.trim().split(/\r?\n/).map(line=>line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')))}$('csvIn').onclick=()=>$('csvFile').click();$('csvFile').onchange=async e=>{let a=parseCSV(await e.target.files[0].text()),h=a.shift().map(x=>x.toLowerCase());for(let row of a){let o=Object.fromEntries(h.map((x,i)=>[x,row[i]||'']));let k=(o.key||o.camelot||'').toUpperCase();await save({id:crypto.randomUUID(),name:o.name||o.title||'Pista',bpm:Number(o.bpm)||null,key:keys.includes(k)?k:'',energy:Number(o.energy)||null,categories:(o.categories||o.category||'').toUpperCase().split(/[;|]/).filter(x=>['INTRO','DESARROLLO','CLOSING'].includes(x)),genre:o.genre||o.style||'',genreManual:!!(o.genre||o.style),genreAuto:false,blob:null})}e.target.value='';refresh()};
+function parseCSV(s){return s.trim().split(/\r?\n/).map(line=>line.split(',').map(x=>x.trim().replace(/^"|"$/g,'')))}$('csvIn').onclick=()=>$('csvFile').click();$('csvFile').onchange=async e=>{let a=parseCSV(await e.target.files[0].text()),h=a.shift().map(x=>x.toLowerCase());for(let row of a){let o=Object.fromEntries(h.map((x,i)=>[x,row[i]||'']));let k=(o.key||o.camelot||'').toUpperCase();await save({id:crypto.randomUUID(),name:o.name||o.title||'Pista',bpm:Number(o.bpm)||null,key:keys.includes(k)?k:'',energy:Number(o.energy)||null,categories:(o.categories||o.category||'').toUpperCase().split(/[;|]/).filter(x=>['INTRO','DESARROLLO','CLOSING'].includes(x)),genre:o.genre||o.style||'',genreManual:!!(o.genre||o.style),genreAuto:false,genreChecked:!!(o.genre||o.style),blob:null})}e.target.value='';refresh()};
 function download(s,n,type){let u=URL.createObjectURL(new Blob([s],{type})),a=document.createElement('a');a.href=u;a.download=n;a.click();URL.revokeObjectURL(u)}$('csvOut').onclick=()=>download(['name,bpm,key,energy,categories,genre',...tracks.map(t=>[t.name,t.bpm,t.key,t.energy,t.categories.join(';'),t.genre||''].map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(','))].join('\r\n'),'session-architect.csv','text/csv');$('m3uOut').onclick=()=>{let c=$('category').value;download('#EXTM3U\n'+tracks.filter(t=>c==='ALL'||t.categories.includes(c)).map(t=>'#EXTINF:-1,'+t.name+'\n'+t.name).join('\n'),'session-architect.m3u','audio/x-mpegurl')};
 
 $('rekordboxOut').onclick=async()=>{
@@ -207,7 +207,7 @@ async function analyzeTrack(t,quiet=false){
   const tempoScore=Math.max(0,Math.min(1,((Number.isFinite(bpm)?bpm:100)-70)/80));
   t.energy=Math.max(1,Math.min(10,Math.round(1+9*(0.7*loudnessScore+0.3*tempoScore))));
   applyEnergyCategory(t);
-  if(!t.genreManual){const guess=suggestGenre(t);t.genre=guess;t.genreAuto=!!guess}
+  if(!t.genreManual){const guess=suggestGenre(t);t.genre=guess;t.genreAuto=!!guess;t.genreChecked=true}
   t.analysisDone=true;t.analysisBpmConfidence=Number(result.bpmConfidence)||0;t.analysisKeyStrength=Number(result.keyStrength)||0;
   t.analysisRmsDb=Math.round(rmsDb*10)/10;
   t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado')+' · Energía estimada '+t.energy+'/10';
