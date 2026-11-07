@@ -236,7 +236,7 @@
           track.energyManual ? Promise.resolve(null) : calculateEnergy(track.blob, track.bpm)
         ]);
 
-        if (!track.genreManual && !track.genre) {
+        if (!track.genreManual) {
           const taggedGenre = tagGenre(tags);
           if (taggedGenre) {
             track.genre = taggedGenre;
@@ -244,6 +244,8 @@
             track.genreChecked = true;
             track.genreSource = 'etiqueta incrustada del archivo';
           } else {
+            // Remove legacy BPM-only auto labels such as the old House guess.
+            if (track.genreAuto) track.genre = '';
             track.genreAuto = false;
             track.genreChecked = true;
             track.genreSource = '';
