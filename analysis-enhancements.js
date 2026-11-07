@@ -147,10 +147,11 @@
       const length = audio.length;
       const hop = Math.max(1, Math.floor(audio.sampleRate * 0.05));
       const rms = [];
+      const channelData = Array.from({length:channelCount}, (_, ch) => audio.getChannelData(ch));
       let sumSquares = 0, sampleCount = 0, peak = 0;
       const stride = Math.max(1, Math.floor(length / 250000));
       for (let ch = 0; ch < channelCount; ch++) {
-        const data = audio.getChannelData(ch);
+        const data = channelData[ch];
         for (let i = 0; i < length; i += stride) {
           const v = data[i];
           sumSquares += v * v;
@@ -163,7 +164,7 @@
       let previous = 0, transients = 0, previousDb = -100;
       const monoSample = i => {
         let value = 0;
-        for (let ch = 0; ch < channelCount; ch++) value += audio.getChannelData(ch)[i] / channelCount;
+        for (let ch = 0; ch < channelCount; ch++) value += channelData[ch][i] / channelCount;
         return value;
       };
       for (let start = 0; start < length; start += hop) {
