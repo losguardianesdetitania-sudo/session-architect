@@ -122,11 +122,11 @@ async function analyzeLibrary(automatic=false){
   for(let i=0;i<pending.length;i++){
    $('analysisStatus').textContent='Análisis automático: '+(i+1)+' de '+pending.length+' · '+pending[i].name+' (mantén abierta la aplicación)';
    await analyzeTrack(pending[i],true);
-   if(!pending[i].analysisDone)failed++;
+   if(!pending[i].analysisDone){failed++;if(pending[i].analysisNote)console.warn('SESSION ARCHITECT: '+pending[i].name+' — '+pending[i].analysisNote);}
    await new Promise(resolve=>setTimeout(resolve,40));
   }
   await refresh();
-  $('analysisStatus').textContent='Proceso terminado: '+(pending.length-failed)+' pista(s) analizadas y clasificadas automáticamente'+(failed?' · '+failed+' con error. Comprueba conexión y formato de audio.':'')+'.';
+  const firstError=pending.find(t=>!t.analysisDone&&t.analysisNote);$('analysisStatus').textContent='Proceso terminado: '+(pending.length-failed)+' pista(s) analizadas y clasificadas automáticamente'+(failed?' · '+failed+' con error. Primer error: '+(firstError?firstError.name+' — '+firstError.analysisNote:'sin detalle'):'')+'.';
  }finally{if(btn)btn.disabled=false}
 }
 $('analyzePending').onclick=()=>analyzeLibrary(false);
@@ -198,7 +198,7 @@ async function analyzeTrack(t,quiet=false){
   t.analysisNote=(camelot?'Tonalidad '+note+' '+scale+' → '+camelot:'Tonalidad no concluyente')+' · BPM '+(Number.isFinite(bpm)?Math.round(bpm*10)/10:'no detectado')+' · Energía estimada '+t.energy+'/10';
   await save(t);
   if(!quiet)$('analysisStatus').textContent='Análisis terminado: '+t.name;
- }catch(err){console.error(err);t.analysisDone=false;if(!quiet)$('analysisStatus').textContent='No se pudo analizar '+t.name+': '+(err.message||err)}
+ }catch(err){console.error('SESSION ARCHITECT analysis failure:',err);t.analysisDone=false;t.analysisNote='ERROR DE ANÁLISIS: '+(err&&err.message?err.message:String(err));try{await save(t)}catch(saveErr){console.error('No se pudo guardar el error de análisis',saveErr)}$('analysisStatus').textContent='Error al analizar "'+t.name+'": '+(err&&err.message?err.message:String(err));}
  finally{
   mono=null;
   if(ctx)try{await ctx.close()}catch(e){}
