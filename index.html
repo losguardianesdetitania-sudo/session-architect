@@ -221,4 +221,4 @@ async function analyzeTrack(t,quiet=false){
  }
 }
 $('wheelkey').innerHTML=keys.map(k=>'<option>'+k+'</option>').join('');function draw(){let k=$('wheelkey').value;$('wheel').innerHTML=keys.map(x=>'<div class="key '+(compat(k,x)?'active':'')+'">'+x+'</div>').join('')}$('wheelkey').onchange=draw;draw();init().catch(console.error);
-</script></body></html>
+</script><script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script><script src="./analysis-enhancements.js"></script></body></html>
