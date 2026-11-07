@@ -147,6 +147,7 @@ async function runMainThreadAnalysis(samples,sampleRate){
  }
 }
 async function runWorkerAnalysis(samples,sampleRate){
+ const fallbackSamples=samples.slice();
  try{
   return await new Promise((resolve,reject)=>{
    let worker;
@@ -158,7 +159,6 @@ async function runWorkerAnalysis(samples,sampleRate){
   });
  }catch(workerError){
   console.warn('SESSION ARCHITECT: se usará el análisis compatible en primer plano.',workerError);
-  const fallbackSamples=samples.byteLength?samples:new Float32Array(0);
   return runMainThreadAnalysis(fallbackSamples,sampleRate);
  }
 }
